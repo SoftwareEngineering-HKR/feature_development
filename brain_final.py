@@ -172,47 +172,6 @@ class Client:
                 time.sleep(5)  # Wait before retrying
 
 ############################## MOUSE CONTROL #############################
-    """     
-    def mouse(self):
-        accel_channels = BoardShim.get_accel_channels(BoardIds.CYTON_BOARD.value)
-
-        try:
-            while True:
-                data = self.board.get_current_board_data(64)
-
-                if data.shape[1] == 0:
-                    continue
-
-                accel = data[accel_channels, :]
-
-                avg_x = np.mean(accel[0])
-                avg_y = np.mean(accel[1])
-
-                STEP = 1
-                THRESHOLD = 0.10
-
-                move_x = 0
-                move_y = 0
-
-                if avg_x > THRESHOLD:
-                    move_x = STEP
-                elif avg_x < -THRESHOLD:
-                    move_x = -STEP
-
-                if avg_y > THRESHOLD:
-                    move_y = STEP
-                elif avg_y < -THRESHOLD:
-                    move_y = -STEP
-
-                if move_x != 0 or move_y != 0:
-                    pyautogui.moveRel(move_x, move_y, _pause=False)
-                time.sleep(0.005)
-
-        except KeyboardInterrupt:
-            print("Stopping mouse control...")
-            
-    """
-
     def mouse(self):
         accel_channels = BoardShim.get_accel_channels(BoardIds.CYTON_BOARD.value)
 
@@ -269,8 +228,8 @@ class Client:
 
                 current_time = time.time()
                 kake_std = np.std(Kake)
-
-                if kake_std > 20 and not bite_cooldown and not self.mouse_locked:
+                #Change this depending on how sensitive the signal is, you can print kake_std to see typical values when biting vs not biting. You want to set it high enough to avoid false positives but low enough to reliably detect bites.
+                if kake_std > 30 and not bite_cooldown and not self.mouse_locked:
                     print(f"Bite detected! std={kake_std:.1f}")
                     pyautogui.click()
                     bite_cooldown = True
@@ -335,7 +294,7 @@ class Client:
 
 ################################## TALK ###############################
 
-    def handle_talk_button(self, talk_button, keybd = None, window_button = None, door_button = None, light_button = None, fan_button = None, buzzer_button = None):
+    def handle_talk_button(self, talk_button, keybd = None, window_button = None, door_button = None, light_button = None, fan_button = None, buzzer_button = None, backend_connected = None):
         if self.recording:
             return
 
@@ -349,9 +308,9 @@ class Client:
         r.update_idletasks()
 
         # Start recording in separate thread
-        threading.Thread(target=self.google_speech_recognition, args=(keybd, talk_button, window_button, door_button, light_button, fan_button, buzzer_button)).start()
+        threading.Thread(target=self.google_speech_recognition, args=(keybd, talk_button, window_button, door_button, light_button, fan_button, buzzer_button, backend_connected)).start()
 
-    def google_speech_recognition(self, keybd = None, talk_button = None, window_button = None, door_button = None, light_button = None, fan_button = None, buzzer_button = None):
+    def google_speech_recognition(self, keybd = None, talk_button = None, window_button = None, door_button = None, light_button = None, fan_button = None, buzzer_button = None, backend_connected = None):
         try:
             rec = sr.Recognizer()
             rec.pause_threshold = 1.0
@@ -364,7 +323,7 @@ class Client:
                 print("Processing...")
 
             text = rec.recognize_google(audio_data, language="en")
-            text = self.pross_google_speech_recognition(text, keybd)
+            text = self.pross_google_speech_recognition(text, keybd, backend_connected)
 
             print(f"Google Speech Recognition: {text}")
             window_in_state = any(device["type"] == "window" for device in self.state.values())
@@ -385,6 +344,9 @@ class Client:
 
         except sr.UnknownValueError:
             print("Google Speech Recognition could not understand audio")
+            if backend_connected:
+                self.state_listner.configure(text=f"Couldn't understand audio", text_color="red")
+                
         except sr.RequestError as e:
             print(f"Could not request results from Google Speech Recognition service; {e}")
         finally:
@@ -392,7 +354,7 @@ class Client:
             self.recording = False
             r.update_idletasks()
 
-    def pross_google_speech_recognition(self, text, keybd):
+    def pross_google_speech_recognition(self, text, keybd, backend_connected):
         text = text.lower()
         text = text.replace(".", "")
         ## LIGHT ##
@@ -401,48 +363,52 @@ class Client:
                 if device["type"] == "light":
                     user.postgress_connect.send(json.dumps({"type": "update value", "payload": {"id": device_id, "value": 1}}))
                     break
-        if ("light" in text and "off" in text):
+        elif ("light" in text and "off" in text):
             for device_id, device in self.state.items():
                 if device["type"] == "light":
                     user.postgress_connect.send(json.dumps({"type": "update value", "payload": {"id": device_id, "value": 0}}))
                     break
-        if ("door" in text and "open" in text):
+        elif ("door" in text and "open" in text):
             for device_id, device in self.state.items():
                 if device["type"] == "door":
                     user.postgress_connect.send(json.dumps({"type": "update value", "payload": {"id": device_id, "value": 1}}))
                     break
-        if ("door" in text and "close" in text):
+        elif ("door" in text and "close" in text):
             for device_id, device in self.state.items():
                 if device["type"] == "door":
                     user.postgress_connect.send(json.dumps({"type": "update value", "payload": {"id": device_id, "value": 0}}))
                     break
-        if ("window" in text and "open" in text):
+        elif ("window" in text and "open" in text):
             for device_id, device in self.state.items():
                 if device["type"] == "window":
                     user.postgress_connect.send(json.dumps({"type": "update value", "payload": {"id": device_id, "value": 1}}))
                     break
-        if ("window" in text and "close" in text):
+        elif ("window" in text and "close" in text):
             for device_id, device in self.state.items():
                 if device["type"] == "window":
                     user.postgress_connect.send(json.dumps({"type": "update value", "payload": {"id": device_id, "value": 0}}))
                     break
-        if ("fan" in text and "on" in text):
+        elif ("fan" in text and "on" in text):
             for device_id, device in self.state.items():
                 if device["type"] == "fan":
                     user.postgress_connect.send(json.dumps({"type": "update value", "payload": {"id": device_id, "value": 1}}))
                     break
-        if ("fan" in text and "off" in text):
+        elif ("fan" in text and "off" in text):
             for device_id, device in self.state.items():
                 if device["type"] == "fan":
                     user.postgress_connect.send(json.dumps({"type": "update value", "payload": {"id": device_id, "value": 0}}))
                     break
-        if ("buzzer" in text):
+        elif ("buzzer" in text):
             for device_id, device in self.state.items():
                 if device["type"] == "buzz":
                     user.postgress_connect.send(json.dumps({"type": "update value", "payload": {"id": device_id, "value": 1}}))
                     break
-        if "keyboard" in text or "keyboard." in text:
+        elif "keyboard" in text or "keyboard." in text:
             r.after(100, lambda: user_keyboard(master=r, widget=keybd, postgress_connect=self.postgress_connect, layout="qwerty"))
+
+        else:
+            backend_connected.configure(text="Could Not Fetch Data", text_color="red")
+            
         return text
 
 ####################### GUI LOGIN AND CREATE USER ######################
@@ -1343,58 +1309,88 @@ class Client:
         
         ########## TALK BUTTON ##########
 
-        talk_button = ctk.CTkButton(r, fg_color="blue",hover_color="#005C00", corner_radius=corner_radius_button, width=button_size, height=button_size, text="", image=talk_image, command=lambda: self.handle_talk_button(talk_button, self.keybd, window_button, door_button, light_button, fan_button, buzzer_button))
+        talk_button = ctk.CTkButton(r, fg_color="blue",hover_color="#005C00", corner_radius=corner_radius_button, width=button_size, height=button_size, text="", image=talk_image, command=lambda: self.handle_talk_button(talk_button, self.keybd, window_button, door_button, light_button, fan_button, buzzer_button, backend_connected))
         talk_button.grid(row=4, column=2, padx=pad, pady=pad, sticky="nsew")
 
-        self.update_gui(r, light_button, light_on, light_off, light_status_label, door_button, door_status_label, door_open, door_closed, window_button, window_status_label, window_open, window_closed, backend_connected, fan_button, fan_status_label, fan_on, fan_off, temperature_status_label, humidity_status_label, buzzer_status_label, self.keybd)
+        self.update_gui(r, light_button, light_on, light_off, light_status_label, door_button, door_status_label, door_open, door_closed, window_button, window_status_label, window_open, window_closed, backend_connected, fan_button, fan_status_label, fan_on, fan_off, temperature_status_label, humidity_status_label, buzzer_status_label, self.keybd, buzzer_button)
 
-    def update_gui(self, root, light_button, light_on, light_off, light_status_label, door_button, door_status_label, door_open, door_closed, window_button, window_status_label, window_open, window_closed, backend_connected, fan_button, fan_status_label, fan_on, fan_off, temperature_status_label, humidity_status_label, buzzer_status_label, keybd):
+    def update_gui(self, root, light_button, light_on, light_off, light_status_label, door_button, door_status_label, door_open, door_closed, window_button, window_status_label, window_open, window_closed, backend_connected, fan_button, fan_status_label, fan_on, fan_off, temperature_status_label, humidity_status_label, buzzer_status_label, keybd, buzzer_button):
         try:
             if self.state:
                 light_status = next((dev["value"] for dev in self.state.values() if dev.get("type") == "light"), None)
                 light_online = next((dev["online"] for dev in self.state.values() if dev.get("type") == "light"), None)
-                    
+                if (light_status):
+                    light_button.configure(fg_color="blue")
+                    light_button.configure(hover_color="#005C00")
+                    light_button.configure(state="normal")
+                if(not light_online):
+                    light_button.configure(fg_color="gray")
+                    light_button.configure(hover_color="gray")
+                    light_button.configure(state="disabled")
+
                 #print(f"GUI Light status: {light_status}")
                 #print(f"GUI Light online: {light_online}")
 
                 door_status = next((dev["value"] for dev in self.state.values() if dev.get("type") == "door"), None)
                 door_online = next((dev["online"] for dev in self.state.values() if dev.get("type") == "door"), None)
-
+                if (door_status):
+                    door_button.configure(fg_color="blue")
+                    door_button.configure(hover_color="#005C00")
+                    door_button.configure(state="normal")
+                if(not door_online):
+                    door_button.configure(fg_color="gray")
+                    door_button.configure(hover_color="gray")
+                    door_button.configure(state="disabled")
                 #print(f"GUI Door status: {door_status}")
                 #print(f"GUI Door online: {door_online}")
 
                 window_status = next((dev["value"] for dev in self.state.values() if dev.get("type") == "window"), None)
                 window_online = next((dev["online"] for dev in self.state.values() if dev.get("type") == "window"), None)
+                if (window_status):
+                    window_button.configure(fg_color="blue")
+                    window_button.configure(hover_color="#005C00")
+                    window_button.configure(state="normal")
+                if(not window_online):
+                    window_button.configure(fg_color="gray")
+                    window_button.configure(hover_color="gray")
+                    window_button.configure(state="disabled")
 
                 #print(f"GUI Window status: {window_status}")
                 #print(f"GUI Window online: {window_online}")
 
                 light_button.configure(image=light_on if light_status == 1 else light_off)
                 light_status_label.configure(text="Online" if light_online == True else "Offline", text_color="green" if light_online == True else "red")
-                
+
                 door_button.configure(image=door_open if door_status == 1 else door_closed)
                 door_status_label.configure(text="Online" if door_online == True else "Offline", text_color="green" if door_online == True else "red")
                 window_button.configure(image=window_open if window_status == 1 else window_closed)
                 window_status_label.configure(text="Online" if window_online == True else "Offline", text_color="green" if window_online == True else "red")
-                
+
                 fan_button.configure(image=fan_on if next((dev["value"] for dev in self.state.values() if dev.get("type") == "fan"), None) else fan_off)
                 fan_online = next((dev.get("online", True) for dev in self.state.values() if dev.get("type") == "fan"), None)
                 fan_status_label.configure(text="Online" if fan_online == True else "Offline", text_color="green" if fan_online == True else "red")
-                
+                if (fan_online):
+                    fan_button.configure(fg_color="blue")
+                    fan_button.configure(hover_color="#005C00")
+                    fan_button.configure(state="normal")
+                if(not fan_online):
+                    fan_button.configure(fg_color="gray")
+                    fan_button.configure(hover_color="gray")
+                    fan_button.configure(state="disabled")
+
 
             ########## TEMPERATURE ##########
-                
                 temperature_device = next((dev for dev in self.state.values() if dev.get("type") == "temperature"), None)
-                
+
                 if temperature_device:
-                    
+
                     if (int(temperature_device["value"]) >= 20 and int(temperature_device["value"]) <= 25):
                         temperature_status_label.configure(text=f"Temperature: {temperature_device['value']}°C", text_color="green")
                     if (int(temperature_device["value"]) < 20):
                         temperature_status_label.configure(text=f"Temperature: {temperature_device['value']}°C", text_color="blue")
                     if (int(temperature_device["value"]) > 25):
                         temperature_status_label.configure(text=f"Temperature: {temperature_device['value']}°C", text_color="red")
-                        
+
                 humidity_device = next((dev for dev in self.state.values() if dev.get("type") == "humidity"), None)
                 if (humidity_device):
                     if (int(humidity_device["value"]) >= 40 and int(humidity_device["value"]) <= 60):
@@ -1407,6 +1403,11 @@ class Client:
                 buzzer_device = next((dev for dev in self.state.values() if dev.get("type") == "buzz"), None)
                 if buzzer_device:
                     buzzer_status_label.configure(text="Online" if buzzer_device["online"] == True else "Offline", text_color="green" if buzzer_device["online"] == True else "red")
+                if(not buzzer_device):
+                    buzzer_status_label.configure(text="Offline", text_color="red")
+                    buzzer_button.configure(fg_color="gray")
+                    buzzer_button.configure(hover_color="gray")
+                    buzzer_button.configure(state="disabled")
 
             ########## KEYBOARD ENTRY UPDATE (SAFE) ##########
             # Only update the keyboard entry if not focused and value is different
@@ -1430,7 +1431,7 @@ class Client:
         except Exception as e:
             print(f"Error updating GUI: {e}")
 
-        root.after(1000, self.update_gui, root, light_button, light_on, light_off, light_status_label, door_button, door_status_label, door_open, door_closed, window_button, window_status_label, window_open, window_closed, backend_connected, fan_button, fan_status_label, fan_on, fan_off, temperature_status_label, humidity_status_label, buzzer_status_label, keybd)
+        root.after(1000, self.update_gui, root, light_button, light_on, light_off, light_status_label, door_button, door_status_label, door_open, door_closed, window_button, window_status_label, window_open, window_closed, backend_connected, fan_button, fan_status_label, fan_on, fan_off, temperature_status_label, humidity_status_label, buzzer_status_label, keybd, buzzer_button)
 
 
 ##### Global #####
